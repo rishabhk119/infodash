@@ -1,176 +1,355 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
 type Opportunity = {
   id: string
   title: string
-  category: string
-  level: string
-  status: string
-  organization: string
+  category: string | null
+  level: string | null
+  status: string | null
+  organization: string | null
+  city: string | null
+  country: string | null
+  location_mode: string | null
   deadline: string | null
   event_start: string | null
-  location_mode: string | null
+  event_end: string | null
   compensation: string | null
   prizes: string | null
-  domain: string | null
+  fees: string | null
+  skills: string | null
+  official_url: string | null
   application_url: string | null
   description_short: string | null
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  internship: 'bg-blue-100 text-blue-800',
-  hackathon: 'bg-purple-100 text-purple-800',
-  research: 'bg-green-100 text-green-800',
-  fellowship: 'bg-yellow-100 text-yellow-800',
+const categoryOptions = ['all', 'internship', 'research', 'hackathon']
+const statusOptions = ['all', 'ongoing', 'upcoming', 'closed']
+const levelOptions = ['all', 'L1', 'L2', 'L3', 'L4']
+
+function formatDate(value: string | null) {
+  if (!value) return 'Not specified'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value
+  return d.toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
 }
 
-const LEVEL_COLORS: Record<string, string> = {
-  L1: 'bg-gray-100 text-gray-600',
-  L2: 'bg-orange-100 text-orange-700',
-  L3: 'bg-red-100 text-red-700',
-  L4: 'bg-red-200 text-red-900',
+function getPrimaryMeta(item: Opportunity) {
+  if (item.category === 'hackathon') {
+    return item.prizes || item.compensation || 'Prize details not listed'
+  }
+  if (item.category === 'research') {
+    return item.compensation || 'Funding not specified'
+  }
+  return item.compensation || 'Compensation not specified'
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  upcoming: 'bg-sky-100 text-sky-700',
-  ongoing: 'bg-emerald-100 text-emerald-700',
-  closed: 'bg-gray-200 text-gray-500',
-  unknown: 'bg-gray-100 text-gray-400',
+function getDateMeta(item: Opportunity) {
+  if (item.category === 'hackathon') {
+    if (item.event_start) return `Starts ${formatDate(item.event_start)}`
+    if (item.event_end) return `Ends ${formatDate(item.event_end)}`
+    return 'Dates not specified'
+  }
+  if (item.deadline) return `Deadline ${formatDate(item.deadline)}`
+  return 'Deadline not specified'
 }
 
-export default function Home() {
-  const [data, setData] = useState<Opportunity[]>([])
-  const [filtered, setFiltered] = useState<Opportunity[]>([])
-  const [search, setSearch] = useState('')
-  const [category, setCategory] = useState('all')
-  const [level, setLevel] = useState('all')
-  const [status, setStatus] = useState('all')
+function statusTone(status: string | null) {
+  switch (status) {
+    case 'ongoing':
+      return 'pill-green'
+    case 'upcoming':
+      return 'pill-amber'
+    case 'closed':
+      return 'pill-neutral'
+    default:
+      return 'pill-neutral'
+  }
+}
+
+export default function Page() {
+  const [items, setItems] = useState<Opportunity[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState('all')
+  const [status, setStatus] = useState('all')
+  const [level, setLevel] = useState('all')
 
   useEffect(() => {
-    async function fetchData() {
-      const { data: rows, error } = await supabase
-        .from('opportunities')
-        .select('id,title,category,level,status,organization,deadline,event_start,location_mode,compensation,prizes,domain,application_url,description_short')
-        .order('date_scraped', { ascending: false })
-        .limit(200)
+    const load = async () => {
+      setLoading(true)
+      setError('')
 
-      if (!error && rows) {
-        setData(rows)
-        setFiltered(rows)
+      const { data, error } = await supabase
+        .from('opportunities')
+        .select('*')
+        .order('date_scraped', { ascending: false })
+
+      if (error) {
+        setError(error.message)
+        setItems([])
+      } else {
+        setItems((data as Opportunity[]) || [])
       }
+
       setLoading(false)
     }
-    fetchData()
+
+    load()
   }, [])
 
-  useEffect(() => {
-    let result = data
-    if (search) result = result.filter(o =>
-      o.title.toLowerCase().includes(search.toLowerCase()) ||
-      (o.organization || '').toLowerCase().includes(search.toLowerCase())
-    )
-    if (category !== 'all') result = result.filter(o => o.category === category)
-    if (level !== 'all') result = result.filter(o => o.level === level)
-    if (status !== 'all') result = result.filter(o => o.status === status)
-    setFiltered(result)
-  }, [search, category, level, status, data])
+  const filtered = useMemo(() => {
+    return items.filter((item) => {
+      const matchesQuery =
+        query.trim() === '' ||
+        [
+          item.title,
+          item.organization,
+          item.category,
+          item.skills,
+          item.city,
+          item.country,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+          .includes(query.toLowerCase())
+
+      const matchesCategory = category === 'all' || item.category === category
+      const matchesStatus = status === 'all' || item.status === status
+      const matchesLevel = level === 'all' || item.level === level
+
+      return matchesQuery && matchesCategory && matchesStatus && matchesLevel
+    })
+  }, [items, query, category, status, level])
+
+  const stats = useMemo(() => {
+    const internships = items.filter((i) => i.category === 'internship').length
+    const research = items.filter((i) => i.category === 'research').length
+    const hackathons = items.filter((i) => i.category === 'hackathon').length
+    const live = items.filter((i) => i.status === 'ongoing' || i.status === 'upcoming').length
+
+    return { internships, research, hackathons, live }
+  }, [items])
 
   return (
-    <main className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
+    <main className="page-shell">
+      <div className="ambient ambient-1" />
+      <div className="ambient ambient-2" />
 
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Opportunity Tracker</h1>
-          <p className="text-gray-500 mt-1">Internships, Hackathons, and Research — all in one place</p>
+      <section className="hero">
+        <div className="hero-topline">
+          <div className="brand-mark" aria-hidden="true">
+            <span />
+            <span />
+          </div>
+          <span className="eyebrow">Opportunity intelligence dashboard</span>
         </div>
 
-        {/* Filters */}
-        <div className="flex flex-wrap gap-3 mb-6">
+        <div className="hero-grid">
+          <div className="hero-copy">
+            <h1>Track internships, research programs, and hackathons in one elegant workspace.</h1>
+            <p>
+              A live opportunity board for discovering student-friendly openings, filtering by level and
+              status, and scanning what deserves your attention next.
+            </p>
+
+            <div className="hero-actions">
+              <a href="#opportunities" className="primary-btn">
+                Explore opportunities
+              </a>
+              <div className="mini-note">Live sync pipeline connected to Supabase</div>
+            </div>
+          </div>
+
+          <div className="hero-panel">
+            <div className="hero-panel-label">Current signal</div>
+            <div className="hero-panel-value">{stats.live}</div>
+            <div className="hero-panel-text">active opportunities worth checking right now</div>
+            <div className="hero-panel-bars">
+              <span />
+              <span />
+              <span />
+              <span />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="stats-grid">
+        <article className="stat-card">
+          <div className="stat-label">Internships</div>
+          <div className="stat-value">{stats.internships}</div>
+          <div className="stat-foot">Student and early-career roles</div>
+        </article>
+
+        <article className="stat-card">
+          <div className="stat-label">Research</div>
+          <div className="stat-value">{stats.research}</div>
+          <div className="stat-foot">Fellowships and programs</div>
+        </article>
+
+        <article className="stat-card">
+          <div className="stat-label">Hackathons</div>
+          <div className="stat-value">{stats.hackathons}</div>
+          <div className="stat-foot">Events and build challenges</div>
+        </article>
+
+        <article className="stat-card stat-card-accent">
+          <div className="stat-label">Live now</div>
+          <div className="stat-value">{stats.live}</div>
+          <div className="stat-foot">Ongoing or upcoming</div>
+        </article>
+      </section>
+
+      <section className="filters-panel" id="opportunities">
+        <div className="filters-head">
+          <div>
+            <div className="section-label">Search and refine</div>
+            <h2>Find the best-fit opportunities faster.</h2>
+          </div>
+          <div className="results-chip">{filtered.length} results</div>
+        </div>
+
+        <div className="search-wrap">
           <input
             type="text"
-            placeholder="Search title or organization..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="border border-gray-300 rounded-lg px-4 py-2 text-sm w-72 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            placeholder="Search by title, org, skill, city, or category"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
           />
-          <select value={category} onChange={e => setCategory(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none">
-            <option value="all">All Categories</option>
-            <option value="internship">Internship</option>
-            <option value="hackathon">Hackathon</option>
-            <option value="research">Research</option>
-            <option value="fellowship">Fellowship</option>
-          </select>
-          <select value={level} onChange={e => setLevel(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none">
-            <option value="all">All Levels</option>
-            <option value="L1">L1 - Beginner</option>
-            <option value="L2">L2 - Intermediate</option>
-            <option value="L3">L3 - Advanced</option>
-            <option value="L4">L4 - Elite</option>
-          </select>
-          <select value={status} onChange={e => setStatus(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none">
-            <option value="all">All Status</option>
-            <option value="upcoming">Upcoming</option>
-            <option value="ongoing">Ongoing</option>
-            <option value="closed">Closed</option>
-          </select>
         </div>
 
-        {/* Count */}
-        <p className="text-sm text-gray-400 mb-4">{filtered.length} opportunities found</p>
-
-        {/* Cards */}
-        {loading ? (
-          <p className="text-gray-400">Loading...</p>
-        ) : filtered.length === 0 ? (
-          <p className="text-gray-400">No results found.</p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filtered.map(opp => (
-              <div key={opp.id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 flex flex-col justify-between hover:shadow-md transition">
-                <div>
-                  <div className="flex flex-wrap gap-2 mb-3">
-                    <span className={`text-xs font-medium px-2 py-1 rounded-full ${CATEGORY_COLORS[opp.category] || 'bg-gray-100 text-gray-600'}`}>
-                      {opp.category}
-                    </span>
-                    <span className={`text-xs font-medium px-2 py-1 rounded-full ${LEVEL_COLORS[opp.level] || 'bg-gray-100'}`}>
-                      {opp.level}
-                    </span>
-                    <span className={`text-xs font-medium px-2 py-1 rounded-full ${STATUS_COLORS[opp.status] || 'bg-gray-100'}`}>
-                      {opp.status}
-                    </span>
-                  </div>
-                  <h2 className="text-base font-semibold text-gray-800 mb-1">{opp.title}</h2>
-                  <p className="text-sm text-gray-500 mb-2">{opp.organization}</p>
-                  {opp.description_short && (
-                    <p className="text-xs text-gray-400 line-clamp-2 mb-3">{opp.description_short}</p>
-                  )}
-                  <div className="text-xs text-gray-400 space-y-1">
-                    {opp.deadline && <p>Deadline: <span className="text-gray-600 font-medium">{opp.deadline}</span></p>}
-                    {opp.event_start && <p>Starts: <span className="text-gray-600 font-medium">{opp.event_start}</span></p>}
-                    {opp.compensation && <p>Stipend: <span className="text-gray-600 font-medium">{opp.compensation}</span></p>}
-                    {opp.prizes && <p>Prizes: <span className="text-gray-600 font-medium">{opp.prizes}</span></p>}
-                    {opp.location_mode && <p>Mode: <span className="text-gray-600 font-medium">{opp.location_mode}</span></p>}
-                  </div>
-                </div>
-                {opp.application_url && (
-                  <a href={opp.application_url} target="_blank" rel="noopener noreferrer"
-                    className="mt-4 block text-center text-sm font-medium bg-blue-600 text-white rounded-lg py-2 hover:bg-blue-700 transition">
-                    Apply Now
-                  </a>
-                )}
-              </div>
-            ))}
+        <div className="filters-grid">
+          <div className="filter-block">
+            <label>Category</label>
+            <div className="chip-row">
+              {categoryOptions.map((option) => (
+                <button
+                  key={option}
+                  className={category === option ? 'filter-chip active' : 'filter-chip'}
+                  onClick={() => setCategory(option)}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
           </div>
-        )}
-      </div>
+
+          <div className="filter-block">
+            <label>Status</label>
+            <div className="chip-row">
+              {statusOptions.map((option) => (
+                <button
+                  key={option}
+                  className={status === option ? 'filter-chip active' : 'filter-chip'}
+                  onClick={() => setStatus(option)}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="filter-block">
+            <label>Level</label>
+            <div className="chip-row">
+              {levelOptions.map((option) => (
+                <button
+                  key={option}
+                  className={level === option ? 'filter-chip active' : 'filter-chip'}
+                  onClick={() => setLevel(option)}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {loading ? (
+        <section className="card-grid">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <article key={i} className="opportunity-card skeleton-card">
+              <div className="skeleton-line skeleton-line-lg" />
+              <div className="skeleton-line" />
+              <div className="skeleton-line skeleton-line-sm" />
+            </article>
+          ))}
+        </section>
+      ) : error ? (
+        <section className="message-panel error-panel">
+          <div className="section-label">Error</div>
+          <h3>Could not load opportunities.</h3>
+          <p>{error}</p>
+        </section>
+      ) : filtered.length === 0 ? (
+        <section className="message-panel">
+          <div className="section-label">No matches</div>
+          <h3>No opportunities matched your filters.</h3>
+          <p>Try removing a filter, broadening your search, or checking another category.</p>
+        </section>
+      ) : (
+        <section className="card-grid">
+          {filtered.map((item) => (
+            <article key={item.id} className="opportunity-card">
+              <div className="card-top">
+                <div className="card-badges">
+                  <span className="soft-badge">{item.category || 'unknown'}</span>
+                  <span className={`soft-badge ${statusTone(item.status)}`}>{item.status || 'unknown'}</span>
+                  {item.level && <span className="soft-badge">{item.level}</span>}
+                </div>
+                <div className="card-meta">
+                  {[item.city, item.country].filter(Boolean).join(', ') || item.location_mode || 'Location not set'}
+                </div>
+              </div>
+
+              <div className="card-main">
+                <h3>{item.title}</h3>
+                <p className="org-line">{item.organization || 'Unknown organization'}</p>
+                <p className="desc-line">
+                  {item.description_short || 'No short description available for this opportunity yet.'}
+                </p>
+              </div>
+
+              <div className="card-detail-grid">
+                <div>
+                  <span className="detail-label">Primary</span>
+                  <span className="detail-value">{getPrimaryMeta(item)}</span>
+                </div>
+                <div>
+                  <span className="detail-label">Timeline</span>
+                  <span className="detail-value">{getDateMeta(item)}</span>
+                </div>
+              </div>
+
+              <div className="card-footer">
+                <div className="skill-pill">{item.skills || 'General'}</div>
+                <div className="action-row">
+                  {item.official_url && (
+                    <a href={item.official_url} target="_blank" rel="noreferrer" className="ghost-btn">
+                      Official
+                    </a>
+                  )}
+                  {item.application_url && (
+                    <a href={item.application_url} target="_blank" rel="noreferrer" className="primary-btn small">
+                      Apply
+                    </a>
+                  )}
+                </div>
+              </div>
+            </article>
+          ))}
+        </section>
+      )}
     </main>
   )
 }
